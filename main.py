@@ -24,6 +24,7 @@ def save_bot_state(state):
     with open(STATE_FILE, 'w') as f:
         json.dump(state, f)
 
+@st.cache_resource(ttl=60)  # Cache for 60 seconds
 def create_trading_client():
     api_key = "PK5K5WNB8QPSATC3GVLB"
     secret_key = "GCeYxJenpWlwSZwzBm2Cj7uBYOYYSt04vm1QHdo1"
@@ -127,6 +128,7 @@ def calculate_performance_metrics(positions_data):
         }
     except:
         return {}
+
 def main():
     st.title("Crypto Trading Dashboard")
 
@@ -162,73 +164,93 @@ def main():
     # Bot logic
     if bot_state["is_active"]:
         timer_placeholder = st.empty()
+        positions_placeholder = st.empty()  # Placeholder for positions
+        orders_placeholder = st.empty()     # New placeholder for orders
         
         # Check if it's time to place an order
         current_time = datetime.now()
         last_run = datetime.fromisoformat(bot_state["last_run"]) if bot_state["last_run"] else None
         
-        if not last_run or (current_time - last_run).total_seconds() >= 60:
+        if not last_run or (current_time - last_run).total_seconds() >= 59.5:  # Slightly early to account for delays
+            time.sleep(0.5)  # Fine-tune the exact moment
+            current_time = datetime.now()  # Get fresh timestamp
+            bot_state["last_run"] = current_time.isoformat()
+            save_bot_state(bot_state)
+            
             success, message = auto_buy_btc()
             if success:
                 st.success(f"Order placed successfully at {current_time.strftime('%H:%M:%S')}")
             else:
                 st.error(f"Order failed: {message}")
             
-            bot_state["last_run"] = current_time.isoformat()
-            save_bot_state(bot_state)
+            # Force refresh positions and orders immediately after order
+            client = create_trading_client()
             
-        # Display countdown timer
+            # Update positions
+            positions_data = get_positions()
+            if isinstance(positions_data, list):
+                if positions_data:
+                    positions_placeholder.table(pd.DataFrame(positions_data))
+                else:
+                    positions_placeholder.write("No open positions")
+            else:
+                positions_placeholder.write(positions_data)
+            
+            # Update orders
+            orders_data = get_orders(datetime.now() - timedelta(days=1), datetime.now())
+            if isinstance(orders_data, list):
+                if orders_data:
+                    orders_placeholder.table(pd.DataFrame(orders_data))
+                else:
+                    orders_placeholder.write("No orders in the selected date range")
+            else:
+                orders_placeholder.write(orders_data)
+            
+            # Reduce sleep time for more frequent checks
+            time.sleep(1)
+            st.rerun()
+        
+        # Display next order time
         if bot_state["last_run"]:
             last_run = datetime.fromisoformat(bot_state["last_run"])
-            next_run = last_run + timedelta(minutes=1)
-            time_remaining = (next_run - datetime.now()).total_seconds()
             
-            if time_remaining > 0:
-                timer_placeholder.info(f"""
-                Last order: {last_run.strftime('%H:%M:%S')}
-                Next order in: {int(time_remaining)} seconds
-                """)
+            timer_placeholder.info(f"""
+            Last order: {last_run.strftime('%H:%M:%S')}
+            Next order at: {(last_run + timedelta(seconds=60)).strftime('%H:%M:%S')}
+            """)
+            
+            # Check less frequently but update positions and orders each time
+            positions_data = get_positions()
+            if isinstance(positions_data, list):
+                if positions_data:
+                    positions_placeholder.table(pd.DataFrame(positions_data))
+                else:
+                    positions_placeholder.write("No open positions")
             else:
-                timer_placeholder.info("Placing order...")
-        
-        # Auto-refresh every second when bot is running
-        time.sleep(1)
-        st.rerun()
+                positions_placeholder.write(positions_data)
+            
+            # Update orders
+            orders_data = get_orders(datetime.now() - timedelta(days=1), datetime.now())
+            if isinstance(orders_data, list):
+                if orders_data:
+                    orders_placeholder.table(pd.DataFrame(orders_data))
+                else:
+                    orders_placeholder.write("No orders in the selected date range")
+            else:
+                orders_placeholder.write(orders_data)
+            
+            time.sleep(1) #if you want to change refresh time
+            st.rerun()
 
     st.markdown("---")
 
-    # Trading Section
-    st.header("Trading Actions")
+    # Position Management Section
+    st.header("Position Management")
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     
-    # Buy Form
-    with col1:
-        st.subheader("Buy")
-        buy_symbol = st.text_input("Symbol (e.g., BTC/USD)", key="buy_symbol")
-        buy_qty = st.number_input("Quantity", min_value=0.0, step=0.01, key="buy_qty")
-        if st.button("Buy"):
-            if buy_symbol and buy_qty > 0:
-                result = place_market_order(buy_symbol, buy_qty, OrderSide.BUY)
-                st.write(result)
-            else:
-                st.write("Please enter valid symbol and quantity")
-
-    # Sell Form
-    with col2:
-        st.subheader("Sell")
-        sell_symbol = st.text_input("Symbol (e.g., BTC/USD)", key="sell_symbol")
-        sell_qty = st.number_input("Quantity", min_value=0.0, step=0.01, key="sell_qty")
-        if st.button("Sell"):
-            if sell_symbol and sell_qty > 0:
-                result = place_market_order(sell_symbol, sell_qty, OrderSide.SELL)
-                st.write(result)
-            else:
-                st.write("Please enter valid symbol and quantity")
-
     # Close All Positions
-    with col3:
-        st.subheader("Close Positions")
+    with col1:
         if st.button("Close All Positions"):
             client = create_trading_client()
             try:
@@ -236,8 +258,9 @@ def main():
                 st.write("All positions closed successfully")
             except Exception as e:
                 st.write(f"Error closing positions: {str(e)}")
-        
-        st.subheader("Cancel Orders")
+    
+    # Cancel Orders
+    with col2:
         if st.button("Cancel All Orders"):
             client = create_trading_client()
             try:
