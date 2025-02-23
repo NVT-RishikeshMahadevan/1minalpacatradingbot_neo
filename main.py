@@ -164,16 +164,18 @@ def main():
     # Bot logic
     if bot_state["is_active"]:
         timer_placeholder = st.empty()
-        positions_placeholder = st.empty()  # Placeholder for positions
-        orders_placeholder = st.empty()     # New placeholder for orders
+        positions_placeholder = st.empty()
+        orders_placeholder = st.empty()
         
         # Check if it's time to place an order
         current_time = datetime.now()
         last_run = datetime.fromisoformat(bot_state["last_run"]) if bot_state["last_run"] else None
         
-        if not last_run or (current_time - last_run).total_seconds() >= 59.5:  # Slightly early to account for delays
-            time.sleep(0.5)  # Fine-tune the exact moment
-            current_time = datetime.now()  # Get fresh timestamp
+        # Calculate time since last run
+        time_since_last_run = (current_time - last_run).total_seconds() if last_run else float('inf')
+        
+        # Only place order if more than 60 seconds have passed
+        if time_since_last_run >= 60:
             bot_state["last_run"] = current_time.isoformat()
             save_bot_state(bot_state)
             
@@ -186,7 +188,7 @@ def main():
             # Force refresh positions and orders immediately after order
             client = create_trading_client()
             
-            # Update positions
+            # Update positions and orders
             positions_data = get_positions()
             if isinstance(positions_data, list):
                 if positions_data:
@@ -196,7 +198,6 @@ def main():
             else:
                 positions_placeholder.write(positions_data)
             
-            # Update orders
             orders_data = get_orders(datetime.now() - timedelta(days=1), datetime.now())
             if isinstance(orders_data, list):
                 if orders_data:
@@ -205,21 +206,18 @@ def main():
                     orders_placeholder.write("No orders in the selected date range")
             else:
                 orders_placeholder.write(orders_data)
-            
-            # Reduce sleep time for more frequent checks
-            time.sleep(1)
-            st.rerun()
         
         # Display next order time
         if bot_state["last_run"]:
             last_run = datetime.fromisoformat(bot_state["last_run"])
+            next_run = last_run + timedelta(seconds=60)
             
             timer_placeholder.info(f"""
             Last order: {last_run.strftime('%H:%M:%S')}
-            Next order at: {(last_run + timedelta(seconds=60)).strftime('%H:%M:%S')}
+            Next order at: {next_run.strftime('%H:%M:%S')}
             """)
             
-            # Check less frequently but update positions and orders each time
+            # Update positions and orders display
             positions_data = get_positions()
             if isinstance(positions_data, list):
                 if positions_data:
@@ -229,7 +227,6 @@ def main():
             else:
                 positions_placeholder.write(positions_data)
             
-            # Update orders
             orders_data = get_orders(datetime.now() - timedelta(days=1), datetime.now())
             if isinstance(orders_data, list):
                 if orders_data:
@@ -238,9 +235,9 @@ def main():
                     orders_placeholder.write("No orders in the selected date range")
             else:
                 orders_placeholder.write(orders_data)
-            
-            time.sleep(1) #if you want to change refresh time
-            st.rerun()
+        
+        time.sleep(1)
+        st.rerun()
 
     st.markdown("---")
 
